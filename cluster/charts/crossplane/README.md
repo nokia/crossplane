@@ -131,6 +131,7 @@ and their default values.
 | `tolerations` | Add `tolerations` to the Crossplane pod deployment. | `[]` |
 | `topologySpreadConstraints` | Add `topologySpreadConstraints` to the Crossplane pod deployment. | `[]` |
 | `webhooks.enabled` | Enable webhooks for Crossplane and installed Provider packages. | `true` |
+| `package.enabled` | Enable configuration packages for Crossplane. | `true` |
 
 ### Command Line
 

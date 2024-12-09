@@ -103,6 +103,7 @@ type startCommand struct {
 	MaxConcurrentPackageEstablishers int           `default:"10"  help:"The the maximum number of goroutines to use for establishing Providers, Configurations and Functions."`
 
 	WebhookEnabled bool `default:"true" env:"WEBHOOK_ENABLED" help:"Enable webhook configuration."`
+	PackageEnabled bool `default:"true" env:"PACKAGE_ENABLED" help:"Enable package configuration."`
 
 	TLSServerSecretName string `env:"TLS_SERVER_SECRET_NAME" help:"The name of the TLS Secret that will store Crossplane's server certificate."`
 	TLSServerCertsDir   string `env:"TLS_SERVER_CERTS_DIR"   help:"The path of the folder which will store TLS server certificate of Crossplane."`
@@ -422,8 +423,10 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 		po.FetcherOptions = append(po.FetcherOptions, xpkg.WithCustomCA(rootCAs))
 	}
 
-	if err := pkg.Setup(mgr, po); err != nil {
-		return errors.Wrap(err, "cannot add packages controllers to manager")
+	if c.PackageEnabled {
+		if err := pkg.Setup(mgr, po); err != nil {
+			return errors.Wrap(err, "cannot add packages controllers to manager")
+		}
 	}
 
 	// Registering webhooks with the manager is what actually starts the webhook

@@ -185,6 +185,10 @@ spec:
           - name: "WEBHOOK_ENABLED"
             value: "false"
           {{- end }}
+          {{- if not .Values.package.enabled }}
+          - name: "PACKAGE_ENABLED"
+            value: "false"
+          {{- end }}
           - name: "TLS_SERVER_SECRET_NAME"
             value: crossplane-tls-server
           - name: "TLS_SERVER_CERTS_DIR"

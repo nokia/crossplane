@@ -81,6 +81,10 @@ webhooks:
   # -- Enable webhooks for Crossplane and installed Provider packages.
   enabled: true
 
+package:
+  # -- Enable configuration packages for Crossplane.
+  enabled: true
+
 rbacManager:
   # -- Deploy the RBAC Manager pod and its required roles.
   deploy: true
