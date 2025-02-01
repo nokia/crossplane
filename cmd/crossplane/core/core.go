@@ -102,7 +102,8 @@ type startCommand struct {
 	MaxReconcileRate                 int           `default:"100" help:"The global maximum rate per second at which resources may checked for drift from the desired state."`
 	MaxConcurrentPackageEstablishers int           `default:"10"  help:"The the maximum number of goroutines to use for establishing Providers, Configurations and Functions."`
 
-	WebhookEnabled bool `default:"true" env:"WEBHOOK_ENABLED" help:"Enable webhook configuration."`
+	WebhookEnabled                      bool `default:"true"  env:"WEBHOOK_ENABLED"                        help:"Enable webhook configuration."`
+	AutomaticDependencyDowngradeEnabled bool `default:"false" env:"AUTOMATIC_DEPENDENCY_DOWNGRADE_ENABLED" help:"Enable automatic dependency version downgrades. This configuration requires the 'EnableDependencyVersionUpgrades' feature flag to be enabled."`
 
 	TLSServerSecretName string `env:"TLS_SERVER_SECRET_NAME" help:"The name of the TLS Secret that will store Crossplane's server certificate."`
 	TLSServerCertsDir   string `env:"TLS_SERVER_CERTS_DIR"   help:"The path of the folder which will store TLS server certificate of Crossplane."`
@@ -111,13 +112,13 @@ type startCommand struct {
 
 	EnableExternalSecretStores      bool `group:"Alpha Features:" help:"Enable support for External Secret Stores."`
 	EnableRealtimeCompositions      bool `group:"Alpha Features:" help:"Enable support for realtime compositions, i.e. watching composed resources and reconciling compositions immediately when any of the composed resources is updated."`
-	EnableSSAClaims                 bool `group:"Alpha Features:" help:"Enable support for using Kubernetes server-side apply to sync claims with composite resources (XRs)."`
 	EnableDependencyVersionUpgrades bool `group:"Alpha Features:" help:"Enable support for upgrading dependency versions when the parent package is updated."`
 	EnableSignatureVerification     bool `group:"Alpha Features:" help:"Enable support for package signature verification via ImageConfig API."`
 
 	EnableCompositionWebhookSchemaValidation bool `default:"true" group:"Beta Features:" help:"Enable support for Composition validation using schemas."`
 	EnableDeploymentRuntimeConfigs           bool `default:"true" group:"Beta Features:" help:"Enable support for Deployment Runtime Configs."`
 	EnableUsages                             bool `default:"true" group:"Beta Features:" help:"Enable support for deletion ordering and resource protection with Usages."`
+	EnableSSAClaims                          bool `default:"true" group:"Beta Features:" help:"Enable support for using Kubernetes server-side apply to sync claims with composite resources (XRs)."`
 
 	// These are GA features that previously had alpha or beta feature flags.
 	// You can't turn off a GA feature. We maintain the flags to avoid breaking
@@ -279,12 +280,16 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 		log.Info("Beta feature enabled", "flag", features.EnableBetaDeploymentRuntimeConfigs)
 	}
 	if c.EnableSSAClaims {
-		o.Features.Enable(features.EnableAlphaClaimSSA)
-		log.Info("Alpha feature enabled", "flag", features.EnableAlphaClaimSSA)
+		o.Features.Enable(features.EnableBetaClaimSSA)
+		log.Info("Beta feature enabled", "flag", features.EnableBetaClaimSSA)
 	}
 	if c.EnableDependencyVersionUpgrades {
 		o.Features.Enable(features.EnableAlphaDependencyVersionUpgrades)
 		log.Info("Alpha feature enabled", "flag", features.EnableAlphaDependencyVersionUpgrades)
+
+		if c.AutomaticDependencyDowngradeEnabled {
+			log.Info("Automatic dependency downgrade is enabled.")
+		}
 	}
 	if c.EnableSignatureVerification {
 		o.Features.Enable(features.EnableAlphaSignatureVerification)
@@ -392,14 +397,15 @@ func (c *startCommand) Run(s *runtime.Scheme, log logging.Logger) error { //noli
 	}
 
 	po := pkgcontroller.Options{
-		Options:                          o,
-		Cache:                            xpkg.NewFsPackageCache(c.CacheDir, afero.NewOsFs()),
-		Namespace:                        c.Namespace,
-		ServiceAccount:                   c.ServiceAccount,
-		DefaultRegistry:                  c.Registry,
-		FetcherOptions:                   []xpkg.FetcherOpt{xpkg.WithUserAgent(c.UserAgent)},
-		PackageRuntime:                   pr,
-		MaxConcurrentPackageEstablishers: c.MaxConcurrentPackageEstablishers,
+		Options:                             o,
+		Cache:                               xpkg.NewFsPackageCache(c.CacheDir, afero.NewOsFs()),
+		Namespace:                           c.Namespace,
+		ServiceAccount:                      c.ServiceAccount,
+		DefaultRegistry:                     c.Registry,
+		FetcherOptions:                      []xpkg.FetcherOpt{xpkg.WithUserAgent(c.UserAgent)},
+		PackageRuntime:                      pr,
+		MaxConcurrentPackageEstablishers:    c.MaxConcurrentPackageEstablishers,
+		AutomaticDependencyDowngradeEnabled: c.AutomaticDependencyDowngradeEnabled,
 	}
 
 	// We need to set the TUF_ROOT environment variable so that the TUF client
