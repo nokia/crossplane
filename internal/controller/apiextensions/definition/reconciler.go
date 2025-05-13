@@ -99,9 +99,10 @@ type ControllerEngine interface {
 	Stop(ctx context.Context, name string) error
 	IsRunning(name string) bool
 	GetWatches(name string) ([]engine.WatchID, error)
-	StartWatches(name string, ws ...engine.Watch) error
+	StartWatches(ctx context.Context, name string, ws ...engine.Watch) error
 	StopWatches(ctx context.Context, name string, ws ...engine.WatchID) (int, error)
-	GetClient() client.Client
+	GetCached() client.Client
+	GetUncached() client.Client
 	GetFieldIndexer() client.FieldIndexer
 }
 
@@ -109,7 +110,9 @@ type ControllerEngine interface {
 type NopEngine struct{}
 
 // Start does nothing.
-func (e *NopEngine) Start(_ string, _ ...engine.ControllerOption) error { return nil }
+func (e *NopEngine) Start(_ string, _ ...engine.ControllerOption) error {
+	return nil
+}
 
 // Stop does nothing.
 func (e *NopEngine) Stop(_ context.Context, _ string) error { return nil }
@@ -121,15 +124,20 @@ func (e *NopEngine) IsRunning(_ string) bool { return true }
 func (e *NopEngine) GetWatches(_ string) ([]engine.WatchID, error) { return nil, nil }
 
 // StartWatches does nothing.
-func (e *NopEngine) StartWatches(_ string, _ ...engine.Watch) error { return nil }
+func (e *NopEngine) StartWatches(_ context.Context, _ string, _ ...engine.Watch) error { return nil }
 
 // StopWatches does nothing.
 func (e *NopEngine) StopWatches(_ context.Context, _ string, _ ...engine.WatchID) (int, error) {
 	return 0, nil
 }
 
-// GetClient returns a nil client.
-func (e *NopEngine) GetClient() client.Client {
+// GetCached returns a nil client.
+func (e *NopEngine) GetCached() client.Client {
+	return nil
+}
+
+// GetUncached returns a nil client.
+func (e *NopEngine) GetUncached() client.Client {
 	return nil
 }
 
@@ -214,7 +222,7 @@ func WithControllerEngine(c ControllerEngine) ReconcilerOption {
 	}
 }
 
-// WithCRDRenderer specifies how the Reconciler should render an
+// WithCRDRenderer specifies how the Reconciler should render a
 // CompositeResourceDefinition's corresponding CustomResourceDefinition.
 func WithCRDRenderer(c CRDRenderer) ReconcilerOption {
 	return func(r *Reconciler) {
@@ -469,7 +477,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	ro := r.CompositeReconcilerOptions(ctx, d)
 	ck := resource.CompositeKind(d.GetCompositeGroupVersionKind())
 
-	cr := composite.NewReconciler(r.engine.GetClient(), ck, ro...)
+	cr := composite.NewReconciler(r.engine.GetCached(), r.engine.GetUncached(), ck, ro...)
 	ko := r.options.ForControllerRuntime()
 
 	// Most controllers use this type of rate limiter to backoff requeues from 1
@@ -488,7 +496,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	// ControllerOptions instead? It bothers me that this is the only feature
 	// flagged block outside that method.
 	co := []engine.ControllerOption{engine.WithRuntimeOptions(ko)}
-	if r.options.Features.Enabled(features.EnableAlphaRealtimeCompositions) {
+	if r.options.Features.Enabled(features.EnableBetaRealtimeCompositions) {
 		// If realtime composition is enabled we'll start watches dynamically,
 		// so we want to garbage collect watches for composed resource kinds
 		// that aren't used anymore.
@@ -509,8 +517,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	xr := &kunstructured.Unstructured{}
 	xr.SetGroupVersionKind(xrGVK)
 
-	crh := EnqueueForCompositionRevision(resource.CompositeKind(xrGVK), r.engine.GetClient(), log)
-	if err := r.engine.StartWatches(name,
+	crh := EnqueueForCompositionRevision(resource.CompositeKind(xrGVK), r.engine.GetCached(), log)
+	if err := r.engine.StartWatches(ctx, name,
 		engine.WatchFor(xr, engine.WatchTypeCompositeResource, &handler.EnqueueRequestForObject{}),
 		engine.WatchFor(&v1.CompositionRevision{}, engine.WatchTypeCompositionRevision, crh),
 	); err != nil {
@@ -532,11 +540,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 func (r *Reconciler) CompositeReconcilerOptions(ctx context.Context, d *v1.CompositeResourceDefinition) []composite.ReconcilerOption {
 	// The default set of reconciler options when no feature flags are enabled.
 	o := []composite.ReconcilerOption{
-		composite.WithConnectionPublishers(composite.NewAPIFilteredSecretPublisher(r.engine.GetClient(), d.GetConnectionSecretKeys())),
+		composite.WithConnectionPublishers(composite.NewAPIFilteredSecretPublisher(r.engine.GetCached(), d.GetConnectionSecretKeys())),
 		composite.WithCompositionSelector(composite.NewCompositionSelectorChain(
 			composite.NewEnforcedCompositionSelector(*d, r.record),
-			composite.NewAPIDefaultCompositionSelector(r.engine.GetClient(), *meta.ReferenceTo(d, v1.CompositeResourceDefinitionGroupVersionKind), r.record),
-			composite.NewAPILabelSelectorResolver(r.engine.GetClient()),
+			composite.NewAPIDefaultCompositionSelector(r.engine.GetCached(), *meta.ReferenceTo(d, v1.CompositeResourceDefinitionGroupVersionKind), r.record),
+			composite.NewAPILabelSelectorResolver(r.engine.GetCached()),
 		)),
 		composite.WithLogger(r.log.WithValues("controller", composite.ControllerName(d.GetName()))),
 		composite.WithRecorder(r.record.WithAnnotations("controller", composite.ControllerName(d.GetName()))),
@@ -545,7 +553,7 @@ func (r *Reconciler) CompositeReconcilerOptions(ctx context.Context, d *v1.Compo
 
 	// If external secret stores aren't enabled we just fetch connection details
 	// from Kubernetes secrets.
-	var fetcher managed.ConnectionDetailsFetcher = composite.NewSecretConnectionDetailsFetcher(r.engine.GetClient())
+	var fetcher managed.ConnectionDetailsFetcher = composite.NewSecretConnectionDetailsFetcher(r.engine.GetCached())
 
 	// We only want to enable ExternalSecretStore support if the relevant
 	// feature flag is enabled. Otherwise, we start the XR reconcilers with
@@ -555,22 +563,22 @@ func (r *Reconciler) CompositeReconcilerOptions(ctx context.Context, d *v1.Compo
 	// the composite resource.
 	if r.options.Features.Enabled(features.EnableAlphaExternalSecretStores) {
 		pc := []managed.ConnectionPublisher{
-			composite.NewAPIFilteredSecretPublisher(r.engine.GetClient(), d.GetConnectionSecretKeys()),
-			composite.NewSecretStoreConnectionPublisher(connection.NewDetailsManager(r.engine.GetClient(), v1alpha1.StoreConfigGroupVersionKind,
+			composite.NewAPIFilteredSecretPublisher(r.engine.GetCached(), d.GetConnectionSecretKeys()),
+			composite.NewSecretStoreConnectionPublisher(connection.NewDetailsManager(r.engine.GetCached(), v1alpha1.StoreConfigGroupVersionKind,
 				connection.WithTLSConfig(r.options.ESSOptions.TLSConfig)), d.GetConnectionSecretKeys()),
 		}
 
 		// If external secret stores are enabled we need to support fetching
 		// connection details from both secrets and external stores.
 		fetcher = composite.ConnectionDetailsFetcherChain{
-			composite.NewSecretConnectionDetailsFetcher(r.engine.GetClient()),
-			connection.NewDetailsManager(r.engine.GetClient(), v1alpha1.StoreConfigGroupVersionKind, connection.WithTLSConfig(r.options.ESSOptions.TLSConfig)),
+			composite.NewSecretConnectionDetailsFetcher(r.engine.GetCached()),
+			connection.NewDetailsManager(r.engine.GetCached(), v1alpha1.StoreConfigGroupVersionKind, connection.WithTLSConfig(r.options.ESSOptions.TLSConfig)),
 		}
 
 		cc := composite.NewConfiguratorChain(
-			composite.NewAPINamingConfigurator(r.engine.GetClient()),
-			composite.NewAPIConfigurator(r.engine.GetClient()),
-			composite.NewSecretStoreConnectionDetailsConfigurator(r.engine.GetClient()),
+			composite.NewAPINamingConfigurator(r.engine.GetCached()),
+			composite.NewAPIConfigurator(r.engine.GetCached()),
+			composite.NewSecretStoreConnectionDetailsConfigurator(r.engine.GetCached()),
 		)
 
 		o = append(o,
@@ -579,15 +587,15 @@ func (r *Reconciler) CompositeReconcilerOptions(ctx context.Context, d *v1.Compo
 	}
 
 	// This composer is used for mode: Resources Compositions (the default).
-	ptc := composite.NewPTComposer(r.engine.GetClient(), composite.WithComposedConnectionDetailsFetcher(fetcher))
+	ptc := composite.NewPTComposer(r.engine.GetCached(), r.engine.GetUncached(), composite.WithComposedConnectionDetailsFetcher(fetcher))
 
 	// Wrap the PackagedFunctionRunner setup in main with support for loading
 	// extra resources to satisfy function requirements.
-	runner := composite.NewFetchingFunctionRunner(r.options.FunctionRunner, composite.NewExistingExtraResourcesFetcher(r.engine.GetClient()))
+	runner := composite.NewFetchingFunctionRunner(r.options.FunctionRunner, composite.NewExistingExtraResourcesFetcher(r.engine.GetCached()))
 
 	// This composer is used for mode: Pipeline Compositions.
-	fc := composite.NewFunctionComposer(r.engine.GetClient(), runner,
-		composite.WithComposedResourceObserver(composite.NewExistingComposedResourceObserver(r.engine.GetClient(), fetcher)),
+	fc := composite.NewFunctionComposer(r.engine.GetCached(), r.engine.GetUncached(), runner,
+		composite.WithComposedResourceObserver(composite.NewExistingComposedResourceObserver(r.engine.GetCached(), r.engine.GetUncached(), fetcher)),
 		composite.WithCompositeConnectionDetailsFetcher(fetcher),
 	)
 
@@ -613,7 +621,7 @@ func (r *Reconciler) CompositeReconcilerOptions(ctx context.Context, d *v1.Compo
 
 	// If realtime compositions are enabled we pass the ControllerEngine to the
 	// XR reconciler so that it can start watches for composed resources.
-	if r.options.Features.Enabled(features.EnableAlphaRealtimeCompositions) {
+	if r.options.Features.Enabled(features.EnableBetaRealtimeCompositions) {
 		gvk := d.GetCompositeGroupVersionKind()
 		u := &kunstructured.Unstructured{}
 		u.SetAPIVersion(gvk.GroupVersion().String())
@@ -624,8 +632,11 @@ func (r *Reconciler) CompositeReconcilerOptions(ctx context.Context, d *v1.Compo
 			r.log.Debug(errAddIndex, "error", err)
 		}
 
-		h := EnqueueCompositeResources(resource.CompositeKind(d.GetCompositeGroupVersionKind()), r.engine.GetClient(), r.log)
-		o = append(o, composite.WithWatchStarter(composite.ControllerName(d.GetName()), h, r.engine))
+		h := EnqueueCompositeResources(resource.CompositeKind(d.GetCompositeGroupVersionKind()), r.engine.GetCached(), r.log)
+		o = append(o,
+			composite.WithWatchStarter(composite.ControllerName(d.GetName()), h, r.engine),
+			composite.WithPollInterval(0), // Disable polling.
+		)
 	}
 
 	return o

@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -94,7 +95,8 @@ func (h *FunctionHooks) Pre(ctx context.Context, _ runtime.Object, pr v1.Package
 	if !ok {
 		return errors.Errorf("cannot apply function package hooks to %T", pr)
 	}
-	fRev.Status.Endpoint = fmt.Sprintf(serviceEndpointFmt, svc.Name, svc.Namespace, servicePort)
+
+	fRev.Status.Endpoint = fmt.Sprintf(serviceEndpointFmt, svc.Name, svc.Namespace, grpcPort)
 
 	secServer := build.TLSServerSecret()
 	if err := h.client.Apply(ctx, secServer); err != nil {
@@ -183,7 +185,7 @@ func functionDeploymentOverrides(image string) []DeploymentOverride {
 		DeploymentRuntimeWithAdditionalPorts([]corev1.ContainerPort{
 			{
 				Name:          grpcPortName,
-				ContainerPort: servicePort,
+				ContainerPort: grpcPort,
 			},
 		}),
 	}
@@ -199,6 +201,14 @@ func functionServiceOverrides() []ServiceOverride {
 		// FunctionComposer) can load balance across the endpoints.
 		// https://kubernetes.io/docs/concepts/services-networking/service/#headless-services
 		ServiceWithClusterIP(corev1.ClusterIPNone),
+		ServiceWithAdditionalPorts([]corev1.ServicePort{
+			{
+				Name:       grpcPortName,
+				Protocol:   corev1.ProtocolTCP,
+				Port:       grpcPort,
+				TargetPort: intstr.FromString(grpcPortName),
+			},
+		}),
 	}
 }
 
@@ -206,7 +216,9 @@ func functionServiceOverrides() []ServiceOverride {
 // default registry. If the function meta specifies an image, we have a
 // preference for that image over what is specified in the package revision.
 func getFunctionImage(fm *pkgmetav1.Function, pr v1.PackageRevisionWithRuntime, defaultRegistry string) (string, error) {
-	image := pr.GetSource()
+	// Use the image from the status rather than the spec, since it may have
+	// been rewritten by an ImageConfig.
+	image := pr.GetResolvedSource()
 	if fm.Spec.Image != nil {
 		image = *fm.Spec.Image
 	}

@@ -41,7 +41,8 @@ var _ ControllerEngine = &MockEngine{}
 type MockEngine struct {
 	MockGetWatches  func(name string) ([]engine.WatchID, error)
 	MockStopWatches func(ctx context.Context, name string, ws ...engine.WatchID) (int, error)
-	MockGetClient   func() client.Client
+	MockGetCached   func() client.Client
+	MockGetUncached func() client.Client
 }
 
 func (m *MockEngine) GetWatches(name string) ([]engine.WatchID, error) {
@@ -52,8 +53,12 @@ func (m *MockEngine) StopWatches(ctx context.Context, name string, ws ...engine.
 	return m.MockStopWatches(ctx, name, ws...)
 }
 
-func (m *MockEngine) GetClient() client.Client {
-	return m.MockGetClient()
+func (m *MockEngine) GetCached() client.Client {
+	return m.MockGetCached()
+}
+
+func (m *MockEngine) GetUncached() client.Client {
+	return m.MockGetUncached()
 }
 
 func TestGarbageCollectWatchesNow(t *testing.T) {
@@ -78,13 +83,16 @@ func TestGarbageCollectWatchesNow(t *testing.T) {
 		args   args
 		want   want
 	}{
-		"ListXRsError": {
-			reason: "The method should return an error if it can't list XRs.",
+		"GetWatchesError": {
+			reason: "The method should return an error if it can't get watches.",
 			params: params{
 				ce: &MockEngine{
-					MockGetClient: func() client.Client {
+					MockGetWatches: func(_ string) ([]engine.WatchID, error) {
+						return nil, errBoom
+					},
+					MockGetCached: func() client.Client {
 						return &test.MockClient{
-							MockList: test.NewMockListFn(errBoom),
+							MockList: test.NewMockListFn(nil),
 						}
 					},
 				},
@@ -93,17 +101,36 @@ func TestGarbageCollectWatchesNow(t *testing.T) {
 				err: cmpopts.AnyError,
 			},
 		},
-		"GetWatchesError": {
-			reason: "The method should return an error if it can't get watches.",
+		"NoComposedResourceWatches": {
+			reason: "The method should return early if there's no composed resource watches to potentially GC.",
 			params: params{
 				ce: &MockEngine{
-					MockGetClient: func() client.Client {
-						return &test.MockClient{
-							MockList: test.NewMockListFn(nil),
-						}
-					},
 					MockGetWatches: func(_ string) ([]engine.WatchID, error) {
-						return nil, errBoom
+						w := []engine.WatchID{{
+							Type: engine.WatchTypeCompositeResource,
+						}}
+						return w, nil
+					},
+				},
+			},
+			want: want{
+				err: nil,
+			},
+		},
+		"ListXRsError": {
+			reason: "The method should return an error if it can't list XRs.",
+			params: params{
+				ce: &MockEngine{
+					MockGetWatches: func(_ string) ([]engine.WatchID, error) {
+						w := []engine.WatchID{{
+							Type: engine.WatchTypeComposedResource,
+						}}
+						return w, nil
+					},
+					MockGetCached: func() client.Client {
+						return &test.MockClient{
+							MockList: test.NewMockListFn(errBoom),
+						}
 					},
 				},
 			},
@@ -115,11 +142,6 @@ func TestGarbageCollectWatchesNow(t *testing.T) {
 			reason: "The method should return an error if it can't stop watches.",
 			params: params{
 				ce: &MockEngine{
-					MockGetClient: func() client.Client {
-						return &test.MockClient{
-							MockList: test.NewMockListFn(nil),
-						}
-					},
 					MockGetWatches: func(_ string) ([]engine.WatchID, error) {
 						w := []engine.WatchID{
 							{
@@ -128,6 +150,16 @@ func TestGarbageCollectWatchesNow(t *testing.T) {
 							},
 						}
 						return w, nil
+					},
+					MockGetCached: func() client.Client {
+						return &test.MockClient{
+							MockList: test.NewMockListFn(nil),
+						}
+					},
+					MockGetUncached: func() client.Client {
+						return &test.MockClient{
+							MockList: test.NewMockListFn(nil),
+						}
 					},
 					MockStopWatches: func(_ context.Context, _ string, _ ...engine.WatchID) (int, error) {
 						return 0, errBoom
@@ -139,29 +171,64 @@ func TestGarbageCollectWatchesNow(t *testing.T) {
 			},
 		},
 		"NothingToStop": {
-			reason: "StopWatches shouldn't be called if there's no watches to stop.",
+			reason: "The method shouldn't list from the uncached client if the cached client indicates there's no watches to stop.",
 			params: params{
 				ce: &MockEngine{
-					MockGetClient: func() client.Client {
+					MockGetCached: func() client.Client {
 						return &test.MockClient{
 							MockList: test.NewMockListFn(nil),
 						}
 					},
+					// A list from uncached would panic,
+					// since it's not mocked.
 					MockGetWatches: func(_ string) ([]engine.WatchID, error) {
-						return nil, nil
+						w := []engine.WatchID{
+							{
+								Type: engine.WatchTypeCompositeResource,
+								GVK:  schema.GroupVersionKind{},
+							},
+							{
+								Type: engine.WatchTypeClaim,
+								GVK:  schema.GroupVersionKind{},
+							},
+							{
+								Type: engine.WatchTypeCompositionRevision,
+								GVK:  schema.GroupVersionKind{},
+							},
+						}
+						return w, nil
 					},
-					// StopWatches would panic if called, since it's not mocked.
 				},
 			},
 			want: want{
 				err: nil,
 			},
 		},
-		"UneededWatchesStopped": {
+		"UnneededWatchesStopped": {
 			reason: "StopWatches shouldn't be called if there's no watches to stop.",
 			params: params{
 				ce: &MockEngine{
-					MockGetClient: func() client.Client {
+					MockGetCached: func() client.Client {
+						return &test.MockClient{
+							MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
+								xr := composite.New()
+								xr.SetResourceReferences([]corev1.ObjectReference{
+									{
+										APIVersion: "example.org/v1",
+										Kind:       "StillComposed",
+										// Name doesn't matter.
+									},
+								})
+
+								obj.(*unstructured.UnstructuredList).Items = []unstructured.Unstructured{xr.Unstructured}
+
+								return nil
+							}),
+						}
+					},
+					// Uncached result matches cached
+					// result.
+					MockGetUncached: func() client.Client {
 						return &test.MockClient{
 							MockList: test.NewMockListFn(nil, func(obj client.ObjectList) error {
 								xr := composite.New()
