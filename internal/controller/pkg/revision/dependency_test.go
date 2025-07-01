@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
+	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/test"
 
 	pkgmetav1 "github.com/crossplane/crossplane/apis/pkg/meta/v1"
@@ -67,7 +68,7 @@ func TestResolve(t *testing.T) {
 				meta: &pkgmetav1.Configuration{},
 				pr: &v1.ConfigurationRevision{
 					Spec: v1.PackageRevisionSpec{
-						Package:      "hasheddan/config-nop-a:v0.0.1",
+						Package:      "xpkg.crossplane.io/hasheddan/config-nop-a:v0.0.1",
 						DesiredState: v1.PackageRevisionInactive,
 					},
 				},
@@ -81,6 +82,7 @@ func TestResolve(t *testing.T) {
 					client: &test.MockClient{
 						MockGet: test.NewMockGetFn(errBoom),
 					},
+					log: logging.NewNopLogger(),
 				},
 				meta: &pkgmetav1.Configuration{},
 				pr: &v1.ConfigurationRevision{
@@ -101,6 +103,7 @@ func TestResolve(t *testing.T) {
 						MockGet:    test.NewMockGetFn(kerrors.NewNotFound(schema.GroupResource{}, "")),
 						MockCreate: test.NewMockCreateFn(errBoom),
 					},
+					log: logging.NewNopLogger(),
 				},
 				meta: &pkgmetav1.Configuration{},
 				pr: &v1.ConfigurationRevision{
@@ -128,11 +131,12 @@ func TestResolve(t *testing.T) {
 							},
 						}
 					},
+					log: logging.NewNopLogger(),
 				},
 				meta: &pkgmetav1.Configuration{},
 				pr: &v1.ConfigurationRevision{
 					Spec: v1.PackageRevisionSpec{
-						Package: "hasheddan/config-nop-a:v0.0.1",
+						Package: "xpkg.crossplane.io/hasheddan/config-nop-a:v0.0.1",
 					},
 				},
 			},
@@ -150,7 +154,7 @@ func TestResolve(t *testing.T) {
 							l.Packages = []v1beta1.LockPackage{
 								{
 									Name:   "config-nop-a-abc123",
-									Source: "hasheddan/config-nop-a",
+									Source: "xpkg.crossplane.io/hasheddan/config-nop-a",
 								},
 							}
 							return nil
@@ -166,6 +170,7 @@ func TestResolve(t *testing.T) {
 							},
 						}
 					},
+					log: logging.NewNopLogger(),
 				},
 				meta: &pkgmetav1.Configuration{},
 				pr: &v1.ConfigurationRevision{
@@ -173,7 +178,7 @@ func TestResolve(t *testing.T) {
 						Name: "config-nop-a-abc123",
 					},
 					Spec: v1.PackageRevisionSpec{
-						Package:      "hasheddan/config-nop-a:v0.0.1",
+						Package:      "xpkg.crossplane.io/hasheddan/config-nop-a:v0.0.1",
 						DesiredState: v1.PackageRevisionActive,
 					},
 				},
@@ -204,6 +209,7 @@ func TestResolve(t *testing.T) {
 							MockAddOrUpdateNodes: func(_ ...dag.Node) {},
 						}
 					},
+					log: logging.NewNopLogger(),
 				},
 				meta: &pkgmetav1.Configuration{
 					Spec: pkgmetav1.ConfigurationSpec{
@@ -214,6 +220,7 @@ func TestResolve(t *testing.T) {
 								},
 								{
 									Provider: ptr.To("not-here-2"),
+									Version:  ">= v2.0.0",
 								},
 							},
 						},
@@ -224,14 +231,14 @@ func TestResolve(t *testing.T) {
 						Name: "config-nop-a-abc123",
 					},
 					Spec: v1.PackageRevisionSpec{
-						Package:      "hasheddan/config-nop-a:v0.0.1",
+						Package:      "xpkg.crossplane.io/hasheddan/config-nop-a:v0.0.1",
 						DesiredState: v1.PackageRevisionActive,
 					},
 				},
 			},
 			want: want{
 				total: 2,
-				err:   errors.Errorf(errFmtMissingDependencies, []string{"not-here-1", "not-here-2"}),
+				err:   errors.Errorf(errFmtMissingDependencies, `"not-here-1", "not-here-2" (>= v2.0.0)`),
 			},
 		},
 		"ErrorSelfExistMissingDependencies": {
@@ -244,7 +251,7 @@ func TestResolve(t *testing.T) {
 							l.Packages = []v1beta1.LockPackage{
 								{
 									Name:   "config-nop-a-abc123",
-									Source: "hasheddan/config-nop-a",
+									Source: "xpkg.crossplane.io/hasheddan/config-nop-a",
 									Dependencies: []v1beta1.Dependency{
 										{
 											Package: "not-here-1",
@@ -291,6 +298,7 @@ func TestResolve(t *testing.T) {
 							},
 						}
 					},
+					log: logging.NewNopLogger(),
 				},
 				meta: &pkgmetav1.Configuration{
 					Spec: pkgmetav1.ConfigurationSpec{
@@ -311,7 +319,7 @@ func TestResolve(t *testing.T) {
 						Name: "config-nop-a-abc123",
 					},
 					Spec: v1.PackageRevisionSpec{
-						Package:      "hasheddan/config-nop-a:v0.0.1",
+						Package:      "xpkg.crossplane.io/hasheddan/config-nop-a:v0.0.1",
 						DesiredState: v1.PackageRevisionActive,
 					},
 				},
@@ -319,7 +327,7 @@ func TestResolve(t *testing.T) {
 			want: want{
 				total:     3,
 				installed: 1,
-				err:       errors.Errorf(errFmtMissingDependencies, []string{"not-here-2", "not-here-3"}),
+				err:       errors.Errorf(errFmtMissingDependencies, `"not-here-2", "not-here-3"`),
 			},
 		},
 		"ErrorSelfExistInvalidDependencies": {
@@ -332,7 +340,7 @@ func TestResolve(t *testing.T) {
 							l.Packages = []v1beta1.LockPackage{
 								{
 									Name:   "config-nop-a-abc123",
-									Source: "hasheddan/config-nop-a",
+									Source: "xpkg.crossplane.io/hasheddan/config-nop-a",
 									Dependencies: []v1beta1.Dependency{
 										{
 											Package: "not-here-1",
@@ -387,6 +395,7 @@ func TestResolve(t *testing.T) {
 							},
 						}
 					},
+					log: logging.NewNopLogger(),
 				},
 				meta: &pkgmetav1.Configuration{
 					Spec: pkgmetav1.ConfigurationSpec{
@@ -409,7 +418,7 @@ func TestResolve(t *testing.T) {
 						Name: "config-nop-a-abc123",
 					},
 					Spec: v1.PackageRevisionSpec{
-						Package:      "hasheddan/config-nop-a:v0.0.1",
+						Package:      "xpkg.crossplane.io/hasheddan/config-nop-a:v0.0.1",
 						DesiredState: v1.PackageRevisionActive,
 					},
 				},
@@ -431,7 +440,7 @@ func TestResolve(t *testing.T) {
 							l.Packages = []v1beta1.LockPackage{
 								{
 									Name:   "config-nop-a-abc123",
-									Source: "hasheddan/config-nop-a",
+									Source: "xpkg.crossplane.io/hasheddan/config-nop-a",
 									Dependencies: []v1beta1.Dependency{
 										{
 											Package: "not-here-1",
@@ -501,6 +510,7 @@ func TestResolve(t *testing.T) {
 							},
 						}
 					},
+					log: logging.NewNopLogger(),
 				},
 				meta: &pkgmetav1.Configuration{
 					Spec: pkgmetav1.ConfigurationSpec{
@@ -527,7 +537,7 @@ func TestResolve(t *testing.T) {
 						Name: "config-nop-a-abc123",
 					},
 					Spec: v1.PackageRevisionSpec{
-						Package:      "hasheddan/config-nop-a:v0.0.1",
+						Package:      "xpkg.crossplane.io/hasheddan/config-nop-a:v0.0.1",
 						DesiredState: v1.PackageRevisionActive,
 					},
 				},
@@ -550,7 +560,7 @@ func TestResolve(t *testing.T) {
 									{
 										Name: "config-nop-a-abc123",
 										// Source mistmatch provider revision package
-										Source: "hasheddan/config-nop-b",
+										Source: "xpkg.crossplane.io/hasheddan/config-nop-b",
 									},
 								}
 							} else {
@@ -569,7 +579,7 @@ func TestResolve(t *testing.T) {
 								return []dag.Node{}, nil
 							},
 							MockTraceNode: func(s string) (map[string]dag.Node, error) {
-								if s == "hasheddan/config-nop-a" {
+								if s == "xpkg.crossplane.io/hasheddan/config-nop-a" {
 									return map[string]dag.Node{
 										s: &v1beta1.Dependency{},
 									}, nil
@@ -579,6 +589,7 @@ func TestResolve(t *testing.T) {
 							MockAddOrUpdateNodes: func(_ ...dag.Node) {},
 						}
 					},
+					log: logging.NewNopLogger(),
 				},
 				meta: &pkgmetav1.Configuration{},
 				pr: &v1.ConfigurationRevision{
@@ -586,7 +597,7 @@ func TestResolve(t *testing.T) {
 						Name: "config-nop-a-abc123",
 					},
 					Spec: v1.PackageRevisionSpec{
-						Package:      "hasheddan/config-nop-a:v0.0.1",
+						Package:      "xpkg.crossplane.io/hasheddan/config-nop-a:v0.0.1",
 						DesiredState: v1.PackageRevisionActive,
 					},
 				},
