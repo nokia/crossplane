@@ -12,7 +12,7 @@ ARCH=${ARCH:-"${arch}"}
 OS_ARCH=""
 COMPRESSED=${COMPRESSED:-"False"}
 
-BIN=${BIN:-crank}
+BIN=${BIN:-crossplane}
 
 unsupported_arch() {
 	os="$1"
@@ -85,13 +85,7 @@ if [ "${_compr}" = "true" ]; then
 		echo "Failed to unpack the Crossplane CLI compressed file."
 		exit 1
 	fi
-	if ! mv "${BIN}" crossplane; then
-		echo "Failed to rename the unpacked Crossplane CLI binary: \"${BIN}\". Make sure it exists inside the compressed file."
-		exit 1
-	fi
 	rm "${BIN}.sha256" "${url_file}"
-else
-	mv "${url_file}" crossplane
 fi
 
 chmod +x crossplane
